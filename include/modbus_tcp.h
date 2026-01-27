@@ -62,11 +62,12 @@ bool modbusTcpWriteCoilsByte(IPAddress targetIP, uint8_t coilStates);
 /**
  * @brief Write single coil
  * @param targetIP Target IP address
+ * @param unitID Modbus unit ID
  * @param coilAddress Coil address (1-based)
  * @param value true = ON, false = OFF
  * @return true if successful
  */
-bool modbusTcpWriteSingleCoil(IPAddress targetIP, uint16_t coilAddress, bool value);
+bool modbusTcpWriteSingleCoil(IPAddress targetIP, uint16_t unitID, uint16_t coilAddress, bool value);
 
 /**
  * @brief Read coils from a Modbus TCP slave

@@ -431,7 +431,7 @@ bool modbusTcpWriteCoilsByte(IPAddress targetIP, uint8_t coilStates) {
     return true;
 }
 
-bool modbusTcpWriteSingleCoil(IPAddress targetIP, uint16_t coilAddress, bool value) {
+bool modbusTcpWriteSingleCoil(IPAddress targetIP, uint16_t unitID, uint16_t coilAddress, bool value) {
     if (!isInitialized) {
         lastError = "Not initialized";
         return false;
@@ -448,7 +448,7 @@ bool modbusTcpWriteSingleCoil(IPAddress targetIP, uint16_t coilAddress, bool val
     
     // Write single coil (FC 05) with id (unit id)
     // Value should be 0xFF00 for ON, 0x0000 for OFF
-    if (!modbusTCPClient.coilWrite(0, coilAddress, value)) {
+    if (!modbusTCPClient.coilWrite(unitID, coilAddress, value)) {
         lastError = "Coil write failed";
         modbusTCPClient.stop();
         return false;
