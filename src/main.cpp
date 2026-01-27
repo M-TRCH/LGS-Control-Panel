@@ -36,6 +36,8 @@ enum TestPattern
 // =====================================================
 static uint8_t getTestCoilValue(uint8_t pattern, uint8_t step);
 static void runCoilTest();
+static void modbusTcpISetup();
+static bool modbusTcpLoop();
 
 void setup()
 {
@@ -45,12 +47,50 @@ void setup()
     Serial3.println("Modbus TCP Client Test - W5500");
     Serial3.println("========================================\n");
 
-    // Note: SPI is initialized inside modbusTcpInit()
+    // Modbus/W5500 initialization moved to helper
+    modbusTcpISetup();
+}
+
+void loop()
+{
+    // Call Modbus/TCP helper. If it returns false, skip remainder of loop.
+    if (!modbusTcpLoop())
+    {
+        return;
+    }
+
+    // Blink RUN LED
+    static uint32_t lastLedTime = 0;
+    static bool ledState = false;
+    if (millis() - lastLedTime >= 500)
+    {
+        lastLedTime = millis();
+        ledState = !ledState;
+        setLEDBuiltIn(ledState, false, false);
+    }
+}
+
+// Function to read W5500 register directly
+static uint8_t readW5500Register(uint16_t addr)
+{
+    SPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
+    digitalWrite(W5500_CS_PIN, LOW);
+    SPI.transfer((addr >> 8) & 0xFF);  // Address high
+    SPI.transfer(addr & 0xFF);          // Address low
+    SPI.transfer(0x00);                 // Control: Read Common Register
+    uint8_t val = SPI.transfer(0x00);
+    digitalWrite(W5500_CS_PIN, HIGH);
+    SPI.endTransaction();
+    return val;
+}
+
+// Initialize Modbus/W5500 and print network info
+static void modbusTcpISetup()
+{
     Serial3.println("[INFO] Initializing W5500...");
     Serial3.print("[INFO] W5500 CS Pin: PB");
     Serial3.println(W5500_CS_PIN == PB12 ? "12" : "6");
 
-    // Initialize Modbus TCP (no MAC needed, like working code)
     if (modbusTcpInit(localIP, gateway, subnet))
     {
         Serial3.println("[OK] W5500 initialized!");
@@ -61,7 +101,6 @@ void setup()
         Serial3.print("Subnet:   ");
         Serial3.println(Ethernet.subnetMask());
 
-        // Check link status
         if (Ethernet.linkStatus() == LinkON)
         {
             Serial3.println("[OK] Ethernet Link: UP");
@@ -95,67 +134,52 @@ void setup()
     Serial3.println("[INFO] Test interval: 2 seconds\n");
 }
 
-// Function to read W5500 register directly
-static uint8_t readW5500Register(uint16_t addr)
+// Handle Modbus/TCP periodic work; return false to indicate loop should return early
+static bool modbusTcpLoop()
 {
-    SPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
-    digitalWrite(W5500_CS_PIN, LOW);
-    SPI.transfer((addr >> 8) & 0xFF);  // Address high
-    SPI.transfer(addr & 0xFF);          // Address low
-    SPI.transfer(0x00);                 // Control: Read Common Register
-    uint8_t val = SPI.transfer(0x00);
-    digitalWrite(W5500_CS_PIN, HIGH);
-    SPI.endTransaction();
-    return val;
-}
-
-void loop()
-{
-    // IMPORTANT: Must call maintain() for W5500
     Ethernet.maintain();
 
-    // Check Ethernet link
-    // if (!modbusTcpIsLinked())
-    // {
-    //     setLEDBuiltIn(false, true, false);  // CAL LED = warning
+    if (!modbusTcpIsLinked())
+    {
+        setLEDBuiltIn(false, true, false);  // CAL LED = warning
 
-    //     static uint32_t lastWarnTime = 0;
-    //     if (millis() - lastWarnTime >= 2000)
-    //     {
-    //         lastWarnTime = millis();
-    //         Serial3.println("[WARN] Ethernet Link: DOWN");
-    //     }
+        static uint32_t lastWarnTime = 0;
+        if (millis() - lastWarnTime >= 2000)
+        {
+            lastWarnTime = millis();
+            Serial3.println("[WARN] Ethernet Link: DOWN");
+        }
 
-    //     delay(100);
-    //     return;
-    // }
+        delay(100);
+        return false;
+    }
 
     // Run Modbus coil test periodically
-    static bool testCoilState = false;
-    static uint16_t testAddress = 1001;
-    static uint16_t unitID = 11;  // Example unit ID
+    static bool testCoilStateLocal = false;
+    static uint16_t testAddressLocal = 1001;
+    static uint16_t unitIDLocal = 11;  // Example unit ID
 
     if (millis() - lastTestTime >= testInterval)
     {
         lastTestTime = millis();
 
-        testCoilState = !testCoilState;
+        testCoilStateLocal = !testCoilStateLocal;
 
         Serial3.print("[TEST] Write single coil - ID: ");
-        Serial3.print(unitID);
+        Serial3.print(unitIDLocal);
         Serial3.print(", Address: ");
-        Serial3.print(testAddress);
+        Serial3.print(testAddressLocal);
         Serial3.print(" (");
-        Serial3.print(testCoilState ? "ON" : "OFF");
+        Serial3.print(testCoilStateLocal ? "ON" : "OFF");
         Serial3.print(")\t\t\t");
-        bool success = modbusTcpWriteSingleCoil(targetIP, unitID, testAddress, testCoilState);
+        bool success = modbusTcpWriteSingleCoil(targetIP, unitIDLocal, testAddressLocal, testCoilStateLocal);
 
-        if (testCoilState == false)
+        if (testCoilStateLocal == false)
         {
-            testAddress++;
-            if (testAddress > 1008)
+            testAddressLocal++;
+            if (testAddressLocal > 1008)
             {
-                testAddress = 1001;
+                testAddressLocal = 1001;
             }
         }
 
@@ -171,25 +195,17 @@ void loop()
     }
 
     // Print status every 10 seconds
-    // static uint32_t lastStatusTime = 0;
-    // if (millis() - lastStatusTime >= 10000)
-    // {
-    //     lastStatusTime = millis();
-    //     Serial3.print("[STATUS] IP: ");
-    //     Serial3.print(Ethernet.localIP());
-    //     Serial3.print(" | Link: ");
-    //     Serial3.println(Ethernet.linkStatus() == LinkON ? "UP" : "DOWN");
-    // }
-
-    // Blink RUN LED
-    static uint32_t lastLedTime = 0;
-    static bool ledState = false;
-    if (millis() - lastLedTime >= 500)
+    static uint32_t lastStatusTime = 0;
+    if (millis() - lastStatusTime >= 10000)
     {
-        lastLedTime = millis();
-        ledState = !ledState;
-        setLEDBuiltIn(ledState, false, false);
+        lastStatusTime = millis();
+        Serial3.print("[STATUS] IP: ");
+        Serial3.print(Ethernet.localIP());
+        Serial3.print(" | Link: ");
+        Serial3.println(Ethernet.linkStatus() == LinkON ? "UP" : "DOWN");
     }
+
+    return true;
 }
 
 // =====================================================
