@@ -115,20 +115,20 @@ void loop()
     Ethernet.maintain();
 
     // Check Ethernet link
-    if (!modbusTcpIsLinked())
-    {
-        setLEDBuiltIn(false, true, false);  // CAL LED = warning
+    // if (!modbusTcpIsLinked())
+    // {
+    //     setLEDBuiltIn(false, true, false);  // CAL LED = warning
 
-        static uint32_t lastWarnTime = 0;
-        if (millis() - lastWarnTime >= 2000)
-        {
-            lastWarnTime = millis();
-            Serial3.println("[WARN] Ethernet Link: DOWN");
-        }
+    //     static uint32_t lastWarnTime = 0;
+    //     if (millis() - lastWarnTime >= 2000)
+    //     {
+    //         lastWarnTime = millis();
+    //         Serial3.println("[WARN] Ethernet Link: DOWN");
+    //     }
 
-        delay(100);
-        return;
-    }
+    //     delay(100);
+    //     return;
+    // }
 
     // Run Modbus coil test periodically
     static bool testCoilState = false;
@@ -147,7 +147,7 @@ void loop()
         Serial3.print(testAddress);
         Serial3.print(" (");
         Serial3.print(testCoilState ? "ON" : "OFF");
-        Serial3.println(")");
+        Serial3.print(")\t\t\t");
         bool success = modbusTcpWriteSingleCoil(targetIP, unitID, testAddress, testCoilState);
 
         if (testCoilState == false)
@@ -171,15 +171,15 @@ void loop()
     }
 
     // Print status every 10 seconds
-    static uint32_t lastStatusTime = 0;
-    if (millis() - lastStatusTime >= 10000)
-    {
-        lastStatusTime = millis();
-        Serial3.print("[STATUS] IP: ");
-        Serial3.print(Ethernet.localIP());
-        Serial3.print(" | Link: ");
-        Serial3.println(Ethernet.linkStatus() == LinkON ? "UP" : "DOWN");
-    }
+    // static uint32_t lastStatusTime = 0;
+    // if (millis() - lastStatusTime >= 10000)
+    // {
+    //     lastStatusTime = millis();
+    //     Serial3.print("[STATUS] IP: ");
+    //     Serial3.print(Ethernet.localIP());
+    //     Serial3.print(" | Link: ");
+    //     Serial3.println(Ethernet.linkStatus() == LinkON ? "UP" : "DOWN");
+    // }
 
     // Blink RUN LED
     static uint32_t lastLedTime = 0;
