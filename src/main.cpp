@@ -16,7 +16,7 @@ static IPAddress targetIP(192, 168, 0, 101);      // IP ของ Modbus Slave
 // =====================================================
 static uint8_t testCoilState = 0x00;
 static uint32_t lastTestTime = 0;
-static const uint32_t testInterval = 3000;       // Test every 2 seconds
+static const uint32_t testInterval = 300;       // Test every 2 seconds
 static uint8_t testPattern = 0;
 static uint8_t sequenceStep = 0;
 
@@ -120,19 +120,37 @@ void loop()
     
     
     // Run Modbus coil test periodically
-    static bool testCoilState = true;
-    if (millis() - lastTestTime >= testInterval) {
+    static bool testCoilState = false;
+    static uint16_t testAddress = 1001;
+
+    if (millis() - lastTestTime >= testInterval) 
+    {
         lastTestTime = millis();
-        // ทดสอบ write single coil id=11 (address=11)
+        
         testCoilState = !testCoilState;
-        Serial3.print("[TEST] Write single coil id=11 (");
+        
+        Serial3.print("[TEST] Write single coil (boardcast) - Address: ");
+        Serial3.print(testAddress);
+        Serial3.print(" (");
         Serial3.print(testCoilState ? "ON" : "OFF");
         Serial3.println(")");
-        bool success = modbusTcpWriteSingleCoil(targetIP, 1001, testCoilState);
+        bool success = modbusTcpWriteSingleCoil(targetIP, testAddress, testCoilState);
         
-        if (success) {
-            Serial3.println("[OK] Write single coil id=11 success");
-        } else {
+        if (testCoilState == false)
+        {
+            testAddress++;
+            if (testAddress > 1008)
+            {
+                testAddress = 1001;
+            }
+        }
+
+        if (success) 
+        {
+            Serial3.println("[OK] Write single coil success");
+        } 
+        else 
+        {
             Serial3.print("[ERROR] ");
             Serial3.println(modbusTcpGetLastError());
         }

@@ -446,12 +446,9 @@ bool modbusTcpWriteSingleCoil(IPAddress targetIP, uint16_t coilAddress, bool val
         return false;
     }
     
-    // Convert 1-based address to 0-based
-    uint16_t modbusAddr = coilAddress;
-    
     // Write single coil (FC 05) with id (unit id)
     // Value should be 0xFF00 for ON, 0x0000 for OFF
-    if (!modbusTCPClient.coilWrite(11, modbusAddr, value)) {
+    if (!modbusTCPClient.coilWrite(0, coilAddress, value)) {
         lastError = "Coil write failed";
         modbusTCPClient.stop();
         return false;
