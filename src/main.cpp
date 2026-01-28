@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <SPI.h>
+#include <TFT_eSPI.h>
 #include "system.h"
 #include "modbus_tcp.h"
 
@@ -39,6 +40,25 @@ static void runCoilTest();
 static void modbusTcpISetup();
 static bool modbusTcpLoop();
 
+// =====================================================
+// TFT and Touchscreen Setup
+// =====================================================
+// ขา CS ของอุปกรณ์ต่างๆ
+#define TFT_CS_PIN   PB12
+
+// สร้าง Objects
+TFT_eSPI tft = TFT_eSPI();
+
+// ตัวแปรสถานะ
+bool isInitialized = false;
+String lastError = "";
+
+// ตัวแปรสำหรับวาดปุ่ม Clear
+#define BTN_X 400
+#define BTN_Y 10
+#define BTN_W 70
+#define BTN_H 40
+
 void setup()
 {
     systemInit();   // Initialize the system
@@ -48,15 +68,76 @@ void setup()
     Serial3.println("========================================\n");
 
     // Modbus/W5500 initialization moved to helper
-    modbusTcpISetup();
+    // modbusTcpISetup();
+
+    // -----------------------------------------------------------
+    // TFT และ Touch Screen Initialization
+    // -----------------------------------------------------------
+    pinMode(TFT_CS_PIN, OUTPUT);
+    digitalWrite(TFT_CS_PIN, HIGH); // ปิดจอ
+
+    // Touchscreen removed — TOUCH_CS not driven here
+
+    delay(50); // รอให้สัญญาณนิ่ง
+
+    // -----------------------------------------------------------
+    // 3. ตั้งค่า Manual SPI (สำหรับ Ethernet และ Touch)
+    // -----------------------------------------------------------
+    // STM32Duino ต้องการให้ตั้งขาก่อนเรียก SPI.begin()
+    SPI.setMISO(MISO_PIN);
+    SPI.setMOSI(MOSI_PIN);
+    SPI.setSCLK(SCK_PIN);
+    SPI.begin();
+
+    // Don't drive TFT CS low here; let TFT_eSPI handle CS according to configuration
+
+    // -----------------------------------------------------------
+    // 5. เริ่มต้นจอ TFT (TFT_eSPI)
+    // -----------------------------------------------------------
+    Serial3.println("[TFT] Initializing display...");
+    tft.init();
+    Serial3.println("[TFT] init() returned");
+    
+    // Optional backlight control (define TFT_BL in platformio.ini if used)
+#ifdef TFT_BL
+    pinMode(TFT_BL, OUTPUT);
+    digitalWrite(TFT_BL, HIGH);
+    Serial3.println("[TFT] Backlight ON");
+#endif
+    tft.setRotation(3);
+    tft.fillScreen(TFT_BLACK);
+
+    delay(2000);
+    tft.setTextColor(TFT_GREEN, TFT_BLACK);
+    tft.drawCentreString("System Ready", 240, 160, 4);
+    isInitialized = true;
 }
 
 void loop()
 {
-    // Call Modbus/TCP helper. If it returns false, skip remainder of loop.
-    if (!modbusTcpLoop())
+    // // Call Modbus/TCP helper. If it returns false, skip remainder of loop.
+    // if (!modbusTcpLoop())
+    // {
+    //     return;
+    // }
+
+    // Touch testing disabled — run simple TFT-only test instead
+    static uint32_t lastTftTest = 0;
+    static int tftStep = 0;
+    if (millis() - lastTftTest >= 1000)
     {
-        return;
+        lastTftTest = millis();
+        tft.fillScreen((tftStep % 2) ? TFT_NAVY : TFT_DARKGREEN);
+        tft.setTextColor(TFT_WHITE, (tftStep % 2) ? TFT_NAVY : TFT_DARKGREEN);
+        tft.setTextSize(3);
+        tft.drawCentreString("TFT Test", 240, 140, 4);
+        tft.setTextSize(1);
+        tft.drawCentreString(String("Step ") + String(tftStep).c_str(), 240, 180, 2);
+        tftStep++;
+        if (tftStep > 1000)
+        {
+            tftStep = 0;
+        }
     }
 
     // Blink RUN LED
