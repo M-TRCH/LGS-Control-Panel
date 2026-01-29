@@ -44,68 +44,41 @@ static bool modbusTcpLoop();
 // =====================================================
 // TFT and Touchscreen Setup
 // =====================================================
-// ขา CS ของอุปกรณ์ต่างๆ
+// Define pins for TFT and Touchscreen
 #define TFT_CS_PIN   PB12
 #define TOUCH_CS_PIN PC4
 
-// สร้าง Objects
+// Create TFT and Touchscreen objects
 TFT_eSPI tft = TFT_eSPI();
 XPT2046_Touchscreen ts(TOUCH_CS_PIN);
-
-// ตัวแปรสถานะ
-bool isInitialized = false;
-String lastError = "";
-
-// ตัวแปรสำหรับวาดปุ่ม Clear
-#define BTN_X 400
-#define BTN_Y 10
-#define BTN_W 70
-#define BTN_H 40
 
 void setup()
 {
     systemInit();   // Initialize the system
 
-    Serial3.println("\n========================================");
-    Serial3.println("Modbus TCP Client Test - W5500");
-    Serial3.println("========================================\n");
-
+    // -----------------------------------------------------------
+    // Ethernet and Modbus TCP Initialization
+    // -----------------------------------------------------------
+    // Serial3.println("\n========================================");
+    // Serial3.println("Modbus TCP Client Test - W5500");
+    // Serial3.println("========================================\n");
     // Modbus/W5500 initialization moved to helper
     // modbusTcpISetup();
 
     // -----------------------------------------------------------
-    // TFT และ Touch Screen Initialization
+    // TFT and Touchscreen Initialization
     // -----------------------------------------------------------
-    // pinMode(TFT_CS_PIN, OUTPUT);
-    // digitalWrite(TFT_CS_PIN, HIGH); // ปิดจอ
-
-    // pinMode(TOUCH_CS_PIN, OUTPUT);
-    // digitalWrite(TOUCH_CS_PIN, HIGH); // ปิดทัช
-
-    delay(2000); // รอให้สัญญาณนิ่ง
-
-    // -----------------------------------------------------------
-    // 3. ตั้งค่า Manual SPI (สำหรับ Ethernet และ Touch)
-    // -----------------------------------------------------------
-    // STM32Duino ต้องการให้ตั้งขาก่อนเรียก SPI.begin()
     SPI.setMISO(MISO_PIN);
     SPI.setMOSI(MOSI_PIN);
     SPI.setSCLK(SCK_PIN);
-    // SPI.setSSEL(TOUCH_CS_PIN); 
     SPI.begin();
 
-    // Don't drive TFT CS low here; let TFT_eSPI handle CS according to configuration
-
-    // -----------------------------------------------------------
-    // 5. เริ่มต้นจอ TFT (TFT_eSPI)
-    // // -----------------------------------------------------------
-    Serial3.println("[TFT] Initializing display...");
+    // Initialize TFT
     tft.init();
-    Serial3.println("[TFT] init() returned");
     tft.setRotation(3);
     tft.fillScreen(TFT_BLACK);
     
-    // Initialize touchscreen (use same rotation as TFT)
+    // Initialize touchscreen
     if (!ts.begin()) 
     {
         Serial3.println("Touchscreen init failed!"); 
@@ -113,29 +86,12 @@ void setup()
     else 
     {
         Serial3.println("Touchscreen started."); 
+        ts.setRotation(1);
     }
-
-    // Optional backlight control (define TFT_BL in platformio.ini if used)
-#ifdef TFT_BL
-    pinMode(TFT_BL, OUTPUT);
-    digitalWrite(TFT_BL, HIGH);
-    Serial3.println("[TFT] Backlight ON");
-#endif
-    
-    // delay(2000);
-    // tft.setTextColor(TFT_GREEN, TFT_BLACK);
-    // tft.drawCentreString("System Ready", 240, 160, 4);
-    // isInitialized = true;
 }
 
 void loop()
 {
-    // // Call Modbus/TCP helper. If it returns false, skip remainder of loop.
-    // if (!modbusTcpLoop())
-    // {
-    //     return;
-    // }
-
     // Touch testing disabled — run simple TFT-only test instead
     static uint32_t lastTftTest = 0;
     static int tftStep = 0;
@@ -155,58 +111,38 @@ void loop()
         }
     }
 
-    // Touchscreen polling and simple visual feedback
-    // static uint32_t lastTouchCheck = 0;
-    // if (millis() - lastTouchCheck >= 100)
-    // {
-    //     lastTouchCheck = millis();
+    if (ts.touched())
+    {
         
-        // Ensure library will sample even without TIRQ interrupt
-        // digitalWrite(TFT_CS_PIN, HIGH);   // ปิดจอ
-        // digitalWrite(TOUCH_CS_PIN, LOW);   // เปิดทัช
-     
-        // ts.isrWake = true;
-        if (ts.touched())
-        {
-           
-            TS_Point raw = ts.getPoint();
+        TS_Point raw = ts.getPoint();
 
-            // Map raw ADC values (0-4095) to screen pixels
-            int mx = map(raw.x, 0, 4095, 0, tft.width() - 1);
-            int my = map(raw.y, 0, 4095, 0, tft.height() - 1);
+        // Map raw ADC values (0-4095) to screen pixels
+        int mx = map(raw.x, 0, 4095, 0, tft.width() - 1);
+        int my = map(raw.y, 0, 4095, 0, tft.height() - 1);
 
-            // Clamp
-            mx = constrain(mx, 0, tft.width() - 1);
-            my = constrain(my, 0, tft.height() - 1);
+        // Clamp
+        mx = constrain(mx, 0, tft.width() - 1);
+        my = constrain(my, 0, tft.height() - 1);
 
-            Serial3.print("[TOUCH] raw=");
-            Serial3.print(raw.x);
-            Serial3.print(',');
-            Serial3.print(raw.y);
-            Serial3.print(" mapped=");
-            Serial3.print(mx);
-            Serial3.print(',');
-            Serial3.println(my);
-
-            // // Draw a small dot where touched and update coordinates text
-            // tft.fillCircle(mx, my, 4, TFT_RED);
-            // tft.setTextSize(1);
-            // tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-            // tft.setCursor(8, 8);
-            // tft.print("X:"); tft.print(mx);
-            // tft.print(" Y:"); tft.print(my);
-        }
-    //  
+        Serial3.print("[TOUCH] raw=");
+        Serial3.print(raw.x);
+        Serial3.print(',');
+        Serial3.print(raw.y);
+        Serial3.print(" mapped=");
+        Serial3.print(mx);
+        Serial3.print(',');
+        Serial3.println(my);
+    }
 
     // Blink RUN LED
-    // static uint32_t lastLedTime = 0;
-    // static bool ledState = false;
-    // if (millis() - lastLedTime >= 500)
-    // {
-    //     lastLedTime = millis();
-    //     ledState = !ledState;
-    //     setLEDBuiltIn(ledState, false, false);
-    // }
+    static uint32_t lastLedTime = 0;
+    static bool ledState = false;
+    if (millis() - lastLedTime >= 500)
+    {
+        lastLedTime = millis();
+        ledState = !ledState;
+        setLEDBuiltIn(ledState, false, false);
+    }
 }
 
 // Function to read W5500 register directly
