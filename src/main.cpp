@@ -40,6 +40,14 @@ static uint8_t getTestCoilValue(uint8_t pattern, uint8_t step);
 static void runCoilTest();
 static void modbusTcpISetup();
 static bool modbusTcpLoop();
+// Touch-test UI
+static void touchTestInit();
+static void touchTestLoop();
+
+// Touch-test state
+static bool touchBtnState[6] = {false, false, false, false, false, false};
+static uint32_t touchLastPress = 0;
+static int touchLastActive = -1;
 
 // =====================================================
 // TFT and Touchscreen Setup
@@ -79,60 +87,24 @@ void setup()
     tft.fillScreen(TFT_BLACK);
     
     // Initialize touchscreen
-    if (!ts.begin()) 
+    if (!ts.begin())
     {
-        Serial3.println("Touchscreen init failed!"); 
-    } 
-    else 
-    {
-        Serial3.println("Touchscreen started."); 
-        ts.setRotation(1);
+        Serial3.println("Touchscreen init failed!");
     }
+    else
+    {
+        Serial3.println("Touchscreen started.");
+        ts.setRotation(1); // match TFT rotation
+    }
+
+    // Draw touch-test UI
+    touchTestInit();
 }
 
 void loop()
 {
-    // Touch testing disabled — run simple TFT-only test instead
-    static uint32_t lastTftTest = 0;
-    static int tftStep = 0;
-    if (millis() - lastTftTest >= 3000)
-    {
-        lastTftTest = millis();
-        tft.fillScreen((tftStep % 2) ? TFT_NAVY : TFT_DARKGREEN);
-        tft.setTextColor(TFT_WHITE, (tftStep % 2) ? TFT_NAVY : TFT_DARKGREEN);
-        tft.setTextSize(3);
-        tft.drawCentreString("TFT Test", 240, 140, 4);
-        tft.setTextSize(1);
-        tft.drawCentreString(String("Step ") + tftStep, 240, 180, 2);
-        tftStep++;
-        if (tftStep > 1000)
-        {
-            tftStep = 0;
-        }
-    }
-
-    if (ts.touched())
-    {
-        
-        TS_Point raw = ts.getPoint();
-
-        // Map raw ADC values (0-4095) to screen pixels
-        int mx = map(raw.x, 0, 4095, 0, tft.width() - 1);
-        int my = map(raw.y, 0, 4095, 0, tft.height() - 1);
-
-        // Clamp
-        mx = constrain(mx, 0, tft.width() - 1);
-        my = constrain(my, 0, tft.height() - 1);
-
-        Serial3.print("[TOUCH] raw=");
-        Serial3.print(raw.x);
-        Serial3.print(',');
-        Serial3.print(raw.y);
-        Serial3.print(" mapped=");
-        Serial3.print(mx);
-        Serial3.print(',');
-        Serial3.println(my);
-    }
+    // Touch test UI handling
+    touchTestLoop();
 
     // Blink RUN LED
     static uint32_t lastLedTime = 0;
@@ -348,5 +320,80 @@ static uint8_t getTestCoilValue(uint8_t pattern, uint8_t step) {
         case PATTERN_ALTERNATE_2: return 0x55;
         case PATTERN_SEQUENCE:    return (1 << (step % 8));
         default:                  return 0x00;
+    }
+}
+
+// ---------------------------
+// Touch-test UI functions
+// ---------------------------
+static void drawTouchButton(int idx)
+{
+    int cols = 3;
+    int rows = 2;
+    int bw = tft.width() / cols;
+    int bh = tft.height() / rows;
+    int x = (idx % cols) * bw;
+    int y = (idx / cols) * bh;
+    int pad = 8;
+    uint16_t color = touchBtnState[idx] ? TFT_GREEN : TFT_CYAN;
+    tft.fillRect(x + pad, y + pad, bw - 2 * pad, bh - 2 * pad, color);
+    tft.drawRect(x + pad, y + pad, bw - 2 * pad, bh - 2 * pad, TFT_WHITE);
+    tft.setTextColor(TFT_BLACK, color);
+    tft.setTextSize(3);
+    String label = String(idx + 1);
+    // Center text both horizontally and vertically
+    tft.setTextDatum(MC_DATUM);
+    tft.drawString(label, x + bw / 2, y + bh / 2, 4);
+    tft.setTextDatum(TL_DATUM);
+}
+
+static void touchTestInit()
+{
+    tft.fillScreen(TFT_BLACK);
+    for (int i = 0; i < 6; i++)
+    {
+        touchBtnState[i] = false;
+        drawTouchButton(i);
+    }
+}
+
+static int hitTestButton(int mx, int my)
+{
+    int cols = 3;
+    int bw = tft.width() / cols;
+    int bh = tft.height() / 2;
+    int col = mx / bw;
+    int row = my / bh;
+    if (col < 0 || col >= 3 || row < 0 || row >= 2) return -1;
+    return row * 3 + col;
+}
+
+static void touchTestLoop()
+{
+    // Ensure sampling
+    ts.isrWake = true;
+    if (ts.touched())
+    {
+        TS_Point raw = ts.getPoint();
+        int mx = map(raw.x, 0, 4095, 0, tft.width() - 1);
+        int my = map(raw.y, 0, 4095, 0, tft.height() - 1);
+        mx = constrain(mx, 0, tft.width() - 1);
+        my = constrain(my, 0, tft.height() - 1);
+        int btn = hitTestButton(mx, my);
+        if (btn >= 0)
+        {
+            if (btn != touchLastActive || (millis() - touchLastPress) > 300)
+            {
+                touchBtnState[btn] = !touchBtnState[btn];
+                drawTouchButton(btn);
+                touchLastPress = millis();
+                touchLastActive = btn;
+                Serial3.print("[TOUCH] button "); Serial3.print(btn + 1); Serial3.println(" toggled");
+            }
+        }
+    }
+    else
+    {
+        touchLastActive = -1;
     }
 }
