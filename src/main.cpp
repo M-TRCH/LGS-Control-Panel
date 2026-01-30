@@ -40,23 +40,22 @@ static uint8_t getTestCoilValue(uint8_t pattern, uint8_t step);
 static void runCoilTest();
 static void modbusTcpISetup();
 static bool modbusTcpLoop();
+// Single-shot Modbus helpers
+static bool modbusSingleShotPulse(IPAddress targetIP, uint16_t unitID, uint16_t coilAddress, uint32_t pulseMs);
+// Note: no retry wrapper; single write attempt is performed below
 // Touch-test UI
 static void touchTestInit();
-// Returns: index 0..5 when a button is newly latched, -1 otherwise
+// Returns: index 0..7 when a button is newly latched, -1 otherwise
 static int touchTestLoop();
 
 // Touch-test state
-static bool touchBtnState[6] = {false, false, false, false, false, false};
+static bool touchBtnState[8] = {false, false, false, false, false, false, false, false};
 static uint32_t touchLastPress = 0;
 static int touchLastActive = -1;
-// Colors for each button: 1=red,2=green,3=blue,4=yellow,5=white,6=black
-// Use magenta for purple (TFT_eSPI predefined color)
-// Button colors: 1=red,2=green,3=blue,4=yellow,5=purple,6=orange
-static const uint16_t touchBtnColors[6] = {TFT_RED, TFT_GREEN, TFT_BLUE, TFT_YELLOW, TFT_MAGENTA, TFT_ORANGE};
-// Expiry timestamps (millis) for latched buttons; 0 means not latched
-static uint32_t touchBtnExpiry[6] = {0, 0, 0, 0, 0, 0};
+// Button colors (ordered): แดง, เขียว, น้ำเงิน, เหลือง, ฟ้า, ม่วง, ส้ม, ขาว
+static const uint16_t touchBtnColors[8] = {TFT_RED, TFT_GREEN, TFT_BLUE, TFT_YELLOW, TFT_CYAN, TFT_MAGENTA, TFT_ORANGE, TFT_WHITE};
 // Per-button last press time for debounce
-static uint32_t touchBtnLastPress[6] = {0, 0, 0, 0, 0, 0};
+static uint32_t touchBtnLastPress[8] = {0, 0, 0, 0, 0, 0, 0, 0};
 
 // Brighten an RGB565 color by a percentage (0-100). Returns RGB565.
 static uint16_t brightenColor(uint16_t color, uint8_t percent)
@@ -389,7 +388,7 @@ static uint8_t getTestCoilValue(uint8_t pattern, uint8_t step) {
 // ---------------------------
 static void drawTouchButton(int idx)
 {
-    int cols = 3;
+    int cols = 4;
     int rows = 2;
     int bw = tft.width() / cols;
     int bh = tft.height() / rows;
@@ -441,23 +440,22 @@ static void drawTouchButton(int idx)
 static void touchTestInit()
 {
     tft.fillScreen(TFT_BLACK);
-    for (int i = 0; i < 6; i++)
+    for (int i = 0; i < 8; i++)
     {
         touchBtnState[i] = false;
-        touchBtnExpiry[i] = 0;
         drawTouchButton(i);
     }
 }
 
 static int hitTestButton(int mx, int my)
 {
-    int cols = 3;
+    int cols = 4;
     int bw = tft.width() / cols;
     int bh = tft.height() / 2;
     int col = mx / bw;
     int row = my / bh;
-    if (col < 0 || col >= 3 || row < 0 || row >= 2) return -1;
-    return row * 3 + col;
+    if (col < 0 || col >= cols || row < 0 || row >= 2) return -1;
+    return row * cols + col;
 }
 
 static int touchTestLoop()
@@ -475,37 +473,41 @@ static int touchTestLoop()
         uint32_t now = millis();
         if (btn >= 0)
         {
-            // If any other button is currently latched (not expired), block other buttons.
-            bool anyLatched = false;
-            int latchedIndex = -1;
-            for (int i = 0; i < 6; ++i)
+            // Per-button debounce (200 ms) to avoid repeated triggers while holding
+            if ((int32_t)(now - touchBtnLastPress[btn]) > 200)
             {
-                if (touchBtnState[i] && touchBtnExpiry[i] != 0 && (int32_t)(touchBtnExpiry[i] - now) > 0)
-                {
-                    anyLatched = true;
-                    latchedIndex = i;
-                    break;
-                }
-            }
+                // Toggle behavior: flip state and redraw
+                bool newState = !touchBtnState[btn];
+                touchBtnState[btn] = newState;
+                touchBtnLastPress[btn] = now;
+                drawTouchButton(btn);
 
-            // Allow action only if no other button is latched, or the same button (to restart timer)
-            if (!anyLatched || latchedIndex == btn)
-            {
-                // Per-button debounce (200 ms) to avoid repeated triggers while holding
-                if ((int32_t)(now - touchBtnLastPress[btn]) > 200)
+                // Send persistent Modbus write for the new state
+                uint16_t coilAddr = COIL_START_ADDRESS + btn; // map button 0->1001
+                uint16_t unitID = 11; // example unit id
+                if (modbusTcpWriteSingleCoil(targetIP, unitID, coilAddr, newState))
                 {
-                    touchBtnState[btn] = true;
-                    touchBtnExpiry[btn] = now + 3000UL; // 3 seconds
-                    touchBtnLastPress[btn] = now;
-                    drawTouchButton(btn);
-                    Serial3.print("[TOUCH] button "); Serial3.print(btn + 1); Serial3.println(" latched for 3 seconds");
-                    // Return the index of the newly latched button
+                    Serial3.print("[MODBUS] Write coil "); Serial3.print(coilAddr);
+                    Serial3.print(newState ? " = ON" : " = OFF");
+                    Serial3.println(" OK");
+                }
+                else
+                {
+                    Serial3.print("[MODBUS] Write coil "); Serial3.print(coilAddr);
+                    Serial3.print(newState ? " = ON" : " = OFF");
+                    Serial3.print(" FAILED: ");
+                    Serial3.println(modbusTcpGetLastError());
+                }
+
+                if (newState)
+                {
+                    Serial3.print("[TOUCH] button "); Serial3.print(btn + 1); Serial3.println(" ON (toggled)");
                     return btn;
                 }
-            }
-            else
-            {
-                // Ignored because another button is latched
+                else
+                {
+                    Serial3.print("[TOUCH] button "); Serial3.print(btn + 1); Serial3.println(" OFF (toggled)");
+                }
             }
             touchLastActive = btn;
         }
@@ -522,18 +524,38 @@ static int touchTestLoop()
         // reset per-button last press only if needed (not required)
     }
 
-    // Check for expirations (timeout release)
-    uint32_t now = millis();
-    for (int i = 0; i < 6; i++)
-    {
-        if (touchBtnState[i] && touchBtnExpiry[i] != 0 && (int32_t)(now - touchBtnExpiry[i]) >= 0)
-        {
-            touchBtnState[i] = false;
-            touchBtnExpiry[i] = 0;
-            drawTouchButton(i);
-            Serial3.print("[TOUCH] button "); Serial3.print(i + 1); Serial3.println(" released (timeout)");
-        }
-    }
-
     return -1;
 }
+
+// Single-shot Modbus pulse: set coil ON, wait `pulseMs`, then set coil OFF.
+// Returns true if both writes succeeded.
+static bool modbusSingleShotPulse(IPAddress targetIP, uint16_t unitID, uint16_t coilAddress, uint32_t pulseMs)
+{
+    Serial3.print("[MODBUS] Single-shot pulse to "); Serial3.print(targetIP);
+    Serial3.print(" coil "); Serial3.print(coilAddress);
+    Serial3.print(" unit "); Serial3.println(unitID);
+
+    // Set ON
+    if (!modbusTcpWriteSingleCoil(targetIP, unitID, coilAddress, true))
+    {
+        Serial3.print("[ERROR] modbus write ON failed: ");
+        Serial3.println(modbusTcpGetLastError());
+        return false;
+    }
+
+    delay(pulseMs);
+
+    // Set OFF
+    if (!modbusTcpWriteSingleCoil(targetIP, unitID, coilAddress, false))
+    {
+        Serial3.print("[ERROR] modbus write OFF failed: ");
+        Serial3.println(modbusTcpGetLastError());
+        return false;
+    }
+
+    Serial3.println("[MODBUS] Single-shot pulse complete");
+    return true;
+}
+
+// Retry wrapper for modbus single coil write. Returns true on success.
+// Note: retries removed — writes are attempted once using modbusTcpWriteSingleCoil()
