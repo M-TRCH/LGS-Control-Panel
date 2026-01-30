@@ -22,6 +22,9 @@ static const uint32_t testInterval = 1200;       // Test every 2 seconds
 static uint8_t testPattern = 0;
 static uint8_t sequenceStep = 0;
 
+// If true, the boolean sent to Modbus is inverted (send !buttonState)
+static bool modbusInvertSend = true;
+
 // Test patterns
 enum TestPattern 
 {
@@ -49,7 +52,7 @@ static void touchTestInit();
 static int touchTestLoop();
 
 // Touch-test state
-static bool touchBtnState[8] = {false, false, false, false, false, false, false, false};
+static bool touchBtnState[8] = {true, true, true, true, true, true, true, true};
 static uint32_t touchLastPress = 0;
 static int touchLastActive = -1;
 // Button colors (ordered): แดง, เขียว, น้ำเงิน, เหลือง, ฟ้า, ม่วง, ส้ม, ขาว
@@ -442,7 +445,7 @@ static void touchTestInit()
     tft.fillScreen(TFT_BLACK);
     for (int i = 0; i < 8; i++)
     {
-        touchBtnState[i] = false;
+        touchBtnState[i] = true;
         drawTouchButton(i);
     }
 }
@@ -484,17 +487,19 @@ static int touchTestLoop()
 
                 // Send persistent Modbus write for the new state
                 uint16_t coilAddr = COIL_START_ADDRESS + btn; // map button 0->1001
-                uint16_t unitID = 11; // example unit id
-                if (modbusTcpWriteSingleCoil(targetIP, unitID, coilAddr, newState))
+                uint16_t unitID = 0; // example unit id
+                // Determine value to send (may be inverted)
+                bool sendValue = modbusInvertSend ? !newState : newState;
+                if (modbusTcpWriteSingleCoil(targetIP, unitID, coilAddr, sendValue))
                 {
                     Serial3.print("[MODBUS] Write coil "); Serial3.print(coilAddr);
-                    Serial3.print(newState ? " = ON" : " = OFF");
-                    Serial3.println(" OK");
+                    Serial3.print(sendValue ? " = ON" : " = OFF");
+                    Serial3.print(" (button visual: "); Serial3.print(newState ? "ON" : "OFF"); Serial3.println(") OK");
                 }
                 else
                 {
                     Serial3.print("[MODBUS] Write coil "); Serial3.print(coilAddr);
-                    Serial3.print(newState ? " = ON" : " = OFF");
+                    Serial3.print(sendValue ? " = ON" : " = OFF");
                     Serial3.print(" FAILED: ");
                     Serial3.println(modbusTcpGetLastError());
                 }
