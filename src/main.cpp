@@ -42,12 +42,70 @@ static void modbusTcpISetup();
 static bool modbusTcpLoop();
 // Touch-test UI
 static void touchTestInit();
-static void touchTestLoop();
+// Returns: index 0..5 when a button is newly latched, -1 otherwise
+static int touchTestLoop();
 
 // Touch-test state
 static bool touchBtnState[6] = {false, false, false, false, false, false};
 static uint32_t touchLastPress = 0;
 static int touchLastActive = -1;
+// Colors for each button: 1=red,2=green,3=blue,4=yellow,5=white,6=black
+// Use magenta for purple (TFT_eSPI predefined color)
+// Button colors: 1=red,2=green,3=blue,4=yellow,5=purple,6=orange
+static const uint16_t touchBtnColors[6] = {TFT_RED, TFT_GREEN, TFT_BLUE, TFT_YELLOW, TFT_MAGENTA, TFT_ORANGE};
+// Expiry timestamps (millis) for latched buttons; 0 means not latched
+static uint32_t touchBtnExpiry[6] = {0, 0, 0, 0, 0, 0};
+// Per-button last press time for debounce
+static uint32_t touchBtnLastPress[6] = {0, 0, 0, 0, 0, 0};
+
+// Brighten an RGB565 color by a percentage (0-100). Returns RGB565.
+static uint16_t brightenColor(uint16_t color, uint8_t percent)
+{
+    // Extract RGB565 components
+    uint8_t r5 = (color >> 11) & 0x1F;
+    uint8_t g6 = (color >> 5) & 0x3F;
+    uint8_t b5 = color & 0x1F;
+
+    // Convert to 8-bit
+    uint8_t r8 = (r5 * 255) / 31;
+    uint8_t g8 = (g6 * 255) / 63;
+    uint8_t b8 = (b5 * 255) / 31;
+
+    // Brighten towards 255 by percent
+    r8 = r8 + ((255 - r8) * percent) / 100;
+    g8 = g8 + ((255 - g8) * percent) / 100;
+    b8 = b8 + ((255 - b8) * percent) / 100;
+
+    // Convert back to RGB565
+    uint16_t nr5 = (r8 * 31 + 127) / 255;
+    uint16_t ng6 = (g8 * 63 + 127) / 255;
+    uint16_t nb5 = (b8 * 31 + 127) / 255;
+
+    return (uint16_t)((nr5 << 11) | (ng6 << 5) | nb5);
+}
+
+// Darken an RGB565 color by a percentage (0-100). Returns RGB565.
+static uint16_t darkenColor(uint16_t color, uint8_t percent)
+{
+    uint8_t r5 = (color >> 11) & 0x1F;
+    uint8_t g6 = (color >> 5) & 0x3F;
+    uint8_t b5 = color & 0x1F;
+
+    uint8_t r8 = (r5 * 255) / 31;
+    uint8_t g8 = (g6 * 255) / 63;
+    uint8_t b8 = (b5 * 255) / 31;
+
+    // Darken towards 0 by percent
+    r8 = (r8 * (100 - percent)) / 100;
+    g8 = (g8 * (100 - percent)) / 100;
+    b8 = (b8 * (100 - percent)) / 100;
+
+    uint16_t nr5 = (r8 * 31 + 127) / 255;
+    uint16_t ng6 = (g8 * 63 + 127) / 255;
+    uint16_t nb5 = (b8 * 31 + 127) / 255;
+
+    return (uint16_t)((nr5 << 11) | (ng6 << 5) | nb5);
+}
 
 // =====================================================
 // TFT and Touchscreen Setup
@@ -67,11 +125,10 @@ void setup()
     // -----------------------------------------------------------
     // Ethernet and Modbus TCP Initialization
     // -----------------------------------------------------------
-    // Serial3.println("\n========================================");
-    // Serial3.println("Modbus TCP Client Test - W5500");
-    // Serial3.println("========================================\n");
-    // Modbus/W5500 initialization moved to helper
-    // modbusTcpISetup();
+    Serial3.println("\n========================================");
+    Serial3.println("Modbus TCP Client Test - W5500");
+    Serial3.println("========================================\n");
+    modbusTcpISetup();
 
     // -----------------------------------------------------------
     // TFT and Touchscreen Initialization
@@ -104,7 +161,11 @@ void setup()
 void loop()
 {
     // Touch test UI handling
-    touchTestLoop();
+    int pressed = touchTestLoop();
+    if (pressed >= 0)
+    {
+        Serial3.print("[TOUCH] Button "); Serial3.print(pressed + 1); Serial3.println(" action triggered.");
+    }
 
     // Blink RUN LED
     static uint32_t lastLedTime = 0;
@@ -335,16 +396,46 @@ static void drawTouchButton(int idx)
     int x = (idx % cols) * bw;
     int y = (idx / cols) * bh;
     int pad = 8;
-    uint16_t color = touchBtnState[idx] ? TFT_GREEN : TFT_CYAN;
-    tft.fillRect(x + pad, y + pad, bw - 2 * pad, bh - 2 * pad, color);
-    tft.drawRect(x + pad, y + pad, bw - 2 * pad, bh - 2 * pad, TFT_WHITE);
-    tft.setTextColor(TFT_BLACK, color);
-    tft.setTextSize(3);
-    String label = String(idx + 1);
-    // Center text both horizontally and vertically
-    tft.setTextDatum(MC_DATUM);
-    tft.drawString(label, x + bw / 2, y + bh / 2, 4);
-    tft.setTextDatum(TL_DATUM);
+
+    // Colors
+    uint16_t borderColor = touchBtnColors[idx];
+    uint16_t baseFill = touchBtnColors[idx];
+    uint16_t effectFill = darkenColor(touchBtnColors[idx], 40); // dim effect when pressed
+
+    int outerW = bw - 2 * pad;
+    int outerH = bh - 2 * pad;
+    if (outerW <= 0 || outerH <= 0) return;
+
+    // Compute thickness: large but bounded so it fits the button
+    int maxThickX = outerW / 2 - 2;
+    int maxThickY = outerH / 2 - 2;
+    int maxThick = maxThickX < maxThickY ? maxThickX : maxThickY;
+    if (maxThick < 1) maxThick = 1;
+    const int preferredThick = 14; // very thick
+    int thick = preferredThick;
+    if (thick > maxThick) thick = maxThick;
+
+    // Draw outer border rectangle (filled with border color)
+    // If pressed/latched: dim the entire button area (border + inner)
+    if (touchBtnState[idx])
+    {
+        tft.fillRect(x + pad, y + pad, outerW, outerH, effectFill);
+    }
+    else
+    {
+        // Draw outer border rectangle (filled with border color)
+        tft.fillRect(x + pad, y + pad, outerW, outerH, borderColor);
+
+        // Draw inner area inset by 'thick' and fill with base color
+        int innerX = x + pad + thick;
+        int innerY = y + pad + thick;
+        int innerW = outerW - 2 * thick;
+        int innerH = outerH - 2 * thick;
+        if (innerW > 0 && innerH > 0)
+        {
+            tft.fillRect(innerX, innerY, innerW, innerH, baseFill);
+        }
+    }
 }
 
 static void touchTestInit()
@@ -353,6 +444,7 @@ static void touchTestInit()
     for (int i = 0; i < 6; i++)
     {
         touchBtnState[i] = false;
+        touchBtnExpiry[i] = 0;
         drawTouchButton(i);
     }
 }
@@ -368,7 +460,7 @@ static int hitTestButton(int mx, int my)
     return row * 3 + col;
 }
 
-static void touchTestLoop()
+static int touchTestLoop()
 {
     // Ensure sampling
     ts.isrWake = true;
@@ -380,20 +472,68 @@ static void touchTestLoop()
         mx = constrain(mx, 0, tft.width() - 1);
         my = constrain(my, 0, tft.height() - 1);
         int btn = hitTestButton(mx, my);
+        uint32_t now = millis();
         if (btn >= 0)
         {
-            if (btn != touchLastActive || (millis() - touchLastPress) > 300)
+            // If any other button is currently latched (not expired), block other buttons.
+            bool anyLatched = false;
+            int latchedIndex = -1;
+            for (int i = 0; i < 6; ++i)
             {
-                touchBtnState[btn] = !touchBtnState[btn];
-                drawTouchButton(btn);
-                touchLastPress = millis();
-                touchLastActive = btn;
-                Serial3.print("[TOUCH] button "); Serial3.print(btn + 1); Serial3.println(" toggled");
+                if (touchBtnState[i] && touchBtnExpiry[i] != 0 && (int32_t)(touchBtnExpiry[i] - now) > 0)
+                {
+                    anyLatched = true;
+                    latchedIndex = i;
+                    break;
+                }
             }
+
+            // Allow action only if no other button is latched, or the same button (to restart timer)
+            if (!anyLatched || latchedIndex == btn)
+            {
+                // Per-button debounce (200 ms) to avoid repeated triggers while holding
+                if ((int32_t)(now - touchBtnLastPress[btn]) > 200)
+                {
+                    touchBtnState[btn] = true;
+                    touchBtnExpiry[btn] = now + 3000UL; // 3 seconds
+                    touchBtnLastPress[btn] = now;
+                    drawTouchButton(btn);
+                    Serial3.print("[TOUCH] button "); Serial3.print(btn + 1); Serial3.println(" latched for 3 seconds");
+                    // Return the index of the newly latched button
+                    return btn;
+                }
+            }
+            else
+            {
+                // Ignored because another button is latched
+            }
+            touchLastActive = btn;
+        }
+        else
+        {
+            // touched but outside buttons -> clear active press marker
+            touchLastActive = -1;
         }
     }
     else
     {
+        // not touched: clear active press marker so next touch counts
         touchLastActive = -1;
+        // reset per-button last press only if needed (not required)
     }
+
+    // Check for expirations (timeout release)
+    uint32_t now = millis();
+    for (int i = 0; i < 6; i++)
+    {
+        if (touchBtnState[i] && touchBtnExpiry[i] != 0 && (int32_t)(now - touchBtnExpiry[i]) >= 0)
+        {
+            touchBtnState[i] = false;
+            touchBtnExpiry[i] = 0;
+            drawTouchButton(i);
+            Serial3.print("[TOUCH] button "); Serial3.print(i + 1); Serial3.println(" released (timeout)");
+        }
+    }
+
+    return -1;
 }

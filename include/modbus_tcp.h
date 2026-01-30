@@ -7,7 +7,7 @@
 #include <ArduinoModbus.h>
 
 // W5500 configuration
-#define W5500_CS_PIN        PB12
+#define W5500_CS_PIN        PB15
 
 // Network and Modbus
 #define MODBUS_TCP_PORT     502
