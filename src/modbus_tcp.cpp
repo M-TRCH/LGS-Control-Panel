@@ -65,6 +65,9 @@ bool modbusTcpInit(IPAddress ip, IPAddress gateway, IPAddress subnet)
     lastError = "No error";
     Serial3.print("[MODBUS] Ethernet ready: ");
     Serial3.println(assigned);
+    // Set Modbus/TCP response timeout to 1000 ms
+    modbusClient.setTimeout(500);
+    Serial3.println("[MODBUS] Response timeout set to 1000 ms");
     return true;
 }
 
